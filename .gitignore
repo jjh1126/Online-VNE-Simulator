@@ -1,0 +1,9 @@
+/build/
+/results/
+
+*.o
+*.so
+*.a
+
+.DS_Store
+*~
