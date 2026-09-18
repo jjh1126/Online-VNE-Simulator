@@ -22,6 +22,8 @@ Place each case under `examples/<case>/` with matching `substrate_<seed>.txt` an
   --results-dir results
 ```
 
+Use `--input-dir /absolute/path/to/cases` to load cases from another location. `--results-dir` also accepts an absolute path.
+
 `--seed N` loads seeds `0` through `N-1`; use `--seed-offset` to change the first seed. `paired` evaluates matching substrate/request seeds, while `cartesian` evaluates every combination.
 
 Algorithms: `VNE-BCP`, `VNE-RFD-B`, `VNE-RFD-D`, `D-ViNE-LB`, and `R-ViNE-LB`.

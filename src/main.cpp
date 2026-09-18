@@ -19,6 +19,7 @@ namespace {
 
 struct Options {
   std::string caseName;
+  fs::path inputDirectory = "examples";
   int seedCount = 0;
   int seedOffset = 0;
   int horizon = -1;
@@ -44,7 +45,7 @@ double parseDouble(const std::string& value, const char* name) {
   throw std::runtime_error(std::string("invalid ") + name + ": " + value);
 }
 void usage() {
-  std::cout << "Usage: vne_sim --case CASE --seed N [--seed-offset N] [--sample-mode paired|cartesian] [--algo VNE-RFD-B|VNE-RFD-D|VNE-BCP|D-ViNE-LB|R-ViNE-LB] [--results-dir DIR] ...\n";
+  std::cout << "Usage: vne_sim --case CASE --seed N [--input-dir DIR] [--results-dir DIR] [--seed-offset N] [--sample-mode paired|cartesian] [--algo VNE-RFD-B|VNE-RFD-D|VNE-BCP|D-ViNE-LB|R-ViNE-LB] ...\n";
 }
 Options parse(int argc, char** argv) {
   Options output;
@@ -54,6 +55,7 @@ Options parse(int argc, char** argv) {
     if (key.rfind("--", 0) != 0 || index + 1 == argc) throw std::runtime_error("invalid option: " + key);
     const std::string value = argv[++index];
     if (key == "--case") output.caseName = value;
+    else if (key == "--input-dir") output.inputDirectory = value;
     else if (key == "--seed") output.seedCount = parseInt(value, "seed count");
     else if (key == "--seed-offset") output.seedOffset = parseInt(value, "seed offset");
     else if (key == "--algo") output.algorithm = value;
@@ -77,7 +79,8 @@ Options parse(int argc, char** argv) {
     else throw std::runtime_error("unknown option: " + key);
   }
   if (output.caseName.empty()) throw std::runtime_error("--case is required");
-  if (fs::path(output.caseName).is_absolute() || output.caseName.find("..") != std::string::npos) throw std::runtime_error("case must be a directory below examples");
+  if (fs::path(output.caseName).is_absolute() || output.caseName.find("..") != std::string::npos) throw std::runtime_error("case must be a directory below the input directory");
+  if (output.inputDirectory.empty()) throw std::runtime_error("--input-dir must not be empty");
   if (output.resultsDirectory.empty()) throw std::runtime_error("--results-dir must not be empty");
   if (output.seedCount <= 0) throw std::runtime_error("--seed must be positive; it is the number of substrate/request seeds");
   if (output.seedOffset < 0) throw std::runtime_error("--seed-offset must not be negative");
@@ -99,7 +102,7 @@ Options parse(int argc, char** argv) {
 int main(int argc, char** argv) {
   try {
     const Options options = parse(argc, argv);
-    const fs::path input = fs::path("examples") / options.caseName;
+    const fs::path input = options.inputDirectory / options.caseName;
     std::vector<vne::SubstrateGraph> substrates;
     std::vector<std::vector<vne::VirtualNetworkRequest>> requestSets;
     for (int seed = 0; seed < options.seedCount; ++seed) {
