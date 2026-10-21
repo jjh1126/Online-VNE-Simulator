@@ -38,6 +38,7 @@ struct RequestRecord {
   double linkBoundaryLossCost = 0.0;
   double boundaryLossObjective = 0.0;
   VineyardDiagnostic vineyard;
+  double embeddingTimeMs = 0.0;
 };
 
 struct RunSummary {
@@ -55,6 +56,10 @@ struct RunSummary {
   double averageCpuUtilization = 0.0;
   double averageLinkUtilization = 0.0;
   double runtimeMs = 0.0;
+  double initializationMs = 0.0;
+  double totalEmbeddingTimeMs = 0.0;
+  double acceptedEmbeddingTimeMs = 0.0;
+  double rejectedEmbeddingTimeMs = 0.0;
 };
 
 struct SimulationResult {
@@ -115,12 +120,30 @@ inline void writeCompactCsv(
     return std::tie(x.algorithm, x.substrateSeed, x.requestSeed) < std::tie(y.algorithm, y.substrateSeed, y.requestSeed);
   });
   std::filesystem::create_directories(resultsDirectory);
-  struct Aggregate { int runs = 0, total = 0, accepted = 0; double revenue = 0, cost = 0, cpu = 0, link = 0, runtime = 0; };
+  struct Aggregate { int runs = 0, total = 0, accepted = 0; double revenue = 0, cost = 0, cpu = 0, link = 0, runtime = 0;
+    double initializationMs = 0, totalEmbeddingTimeMs = 0;
+    double acceptedEmbeddingTimeMs = 0, rejectedEmbeddingTimeMs = 0;
+  };
   std::unordered_map<std::string, Aggregate> aggregate;
   for (const auto& result : results) {
     auto& item = aggregate[result.summary.algorithm]; const auto& row = result.summary;
     ++item.runs; item.total += row.totalRequests; item.accepted += row.accepted; item.revenue += row.revenue; item.cost += row.cost; item.cpu += row.averageCpuUtilization; item.link += row.averageLinkUtilization; item.runtime += row.runtimeMs;
+    item.initializationMs += row.initializationMs;
+    item.totalEmbeddingTimeMs += row.totalEmbeddingTimeMs;
+    item.acceptedEmbeddingTimeMs += row.acceptedEmbeddingTimeMs;
+    item.rejectedEmbeddingTimeMs += row.rejectedEmbeddingTimeMs;
   }
+  const char* embeddingTimingColumns =
+      ",total_embedding_time_ms,accepted_embedding_time_ms,rejected_embedding_time_ms"
+      ",avg_embedding_time_ms,avg_accepted_embedding_time_ms,avg_rejected_embedding_time_ms";
+  const auto writeEmbeddingTiming = [](std::ostream& output, double totalMs,
+      double acceptedMs, double rejectedMs, int total, int accepted) {
+    const int rejected = total - accepted;
+    output << ',' << totalMs << ',' << acceptedMs << ',' << rejectedMs
+           << ',' << (total ? totalMs / total : 0.0)
+           << ',' << (accepted ? acceptedMs / accepted : 0.0)
+           << ',' << (rejected ? rejectedMs / rejected : 0.0) << '\n';
+  };
   std::vector<std::string> names;
   for (const auto& [name, ignored] : aggregate) { (void)ignored; names.push_back(name); }
   std::sort(names.begin(), names.end());
@@ -157,16 +180,20 @@ inline void writeCompactCsv(
       warmupRequests += result.summary.warmupRequests;
       warmupAccepted += result.summary.warmupAccepted;
     }
-    summary << "algo,case,seed_count,sample_mode,sample_count,threads,tau,ksp,delta,max_d,runs,warmup_time,measurement_window,measurement_end,warmup_requests,warmup_accepted,total_requests,accepted,rejected,total_revenue,total_cost,avg_cpu_utilization,avg_link_utilization,total_runtime_ms\n";
-    summary << name << ',' << caseName << ',' << seedCount << ',' << sampleMode << ',' << seedCount << ',' << threads << ',' << config.tau << ',' << config.ksp << ',' << config.delta << ',' << config.maxD << ',' << item.runs << ',' << warmup << ',' << measurementWindow << ',' << warmup + measurementWindow << ',' << warmupRequests << ',' << warmupAccepted << ',' << item.total << ',' << item.accepted << ',' << item.total - item.accepted << ',' << item.revenue << ',' << item.cost << ',' << item.cpu / runs << ',' << item.link / runs << ',' << item.runtime << '\n';
-    requests << "algo,substrate_seed,request_seed,request_id,arrival,departure,virtual_nodes,virtual_edges,accepted,reason,revenue,cost,cpu_utilization,link_utilization,boundary_loss_components_valid,node_boundary_loss_cost,link_boundary_loss_cost,boundary_loss_objective\n";
+    summary << "algo,case,seed_count,sample_mode,sample_count,threads,tau,ksp,delta,max_d,runs,warmup_time,measurement_window,measurement_end,warmup_requests,warmup_accepted,total_requests,accepted,rejected,total_revenue,total_cost,avg_cpu_utilization,avg_link_utilization,total_runtime_ms,total_initialization_ms" << embeddingTimingColumns << '\n';
+    summary << name << ',' << caseName << ',' << seedCount << ',' << sampleMode << ',' << seedCount << ',' << threads << ',' << config.tau << ',' << config.ksp << ',' << config.delta << ',' << config.maxD << ',' << item.runs << ',' << warmup << ',' << measurementWindow << ',' << warmup + measurementWindow << ',' << warmupRequests << ',' << warmupAccepted << ',' << item.total << ',' << item.accepted << ',' << item.total - item.accepted << ',' << item.revenue << ',' << item.cost << ',' << item.cpu / runs << ',' << item.link / runs << ',' << item.runtime << ',' << item.initializationMs;
+    writeEmbeddingTiming(summary, item.totalEmbeddingTimeMs, item.acceptedEmbeddingTimeMs,
+                         item.rejectedEmbeddingTimeMs, item.total, item.accepted);
+    requests << "algo,substrate_seed,request_seed,request_id,arrival,departure,virtual_nodes,virtual_edges,accepted,reason,revenue,cost,cpu_utilization,link_utilization,boundary_loss_components_valid,node_boundary_loss_cost,link_boundary_loss_cost,boundary_loss_objective,embedding_time_ms\n";
     runsOutput << std::setprecision(12);
-    runsOutput << "algo,sample_id,substrate_seed,request_seed,total_requests,accepted,rejected,acceptance_ratio,total_revenue,total_cost,avg_cpu_utilization,avg_link_utilization,runtime_ms\n";
+    runsOutput << "algo,sample_id,substrate_seed,request_seed,total_requests,accepted,rejected,acceptance_ratio,total_revenue,total_cost,avg_cpu_utilization,avg_link_utilization,runtime_ms,initialization_ms" << embeddingTimingColumns << '\n';
     for (const auto& result : results) {
       if (result.summary.algorithm != name) continue;
       const auto& run = result.summary;
-      runsOutput << run.algorithm << ',' << run.substrateSeed << ',' << run.substrateSeed << ',' << run.requestSeed << ',' << run.totalRequests << ',' << run.accepted << ',' << run.totalRequests - run.accepted << ',' << (run.totalRequests ? static_cast<double>(run.accepted) / run.totalRequests : 0.0) << ',' << run.revenue << ',' << run.cost << ',' << run.averageCpuUtilization << ',' << run.averageLinkUtilization << ',' << run.runtimeMs << '\n';
-      for (const auto& row : result.records) requests << row.algorithm << ',' << row.substrateSeed << ',' << row.requestSeed << ',' << row.requestId << ',' << row.arrival << ',' << row.departure << ',' << row.virtualNodes << ',' << row.virtualEdges << ',' << (row.accepted ? 1 : 0) << ',' << rejectReasonName(row.reason) << ',' << row.revenue << ',' << row.cost << ',' << row.cpuUtilization << ',' << row.linkUtilization << ',' << (row.boundaryLossComponentsValid ? 1 : 0) << ',' << row.nodeBoundaryLossCost << ',' << row.linkBoundaryLossCost << ',' << row.boundaryLossObjective << '\n';
+      runsOutput << run.algorithm << ',' << run.substrateSeed << ',' << run.substrateSeed << ',' << run.requestSeed << ',' << run.totalRequests << ',' << run.accepted << ',' << run.totalRequests - run.accepted << ',' << (run.totalRequests ? static_cast<double>(run.accepted) / run.totalRequests : 0.0) << ',' << run.revenue << ',' << run.cost << ',' << run.averageCpuUtilization << ',' << run.averageLinkUtilization << ',' << run.runtimeMs << ',' << run.initializationMs;
+      writeEmbeddingTiming(runsOutput, run.totalEmbeddingTimeMs, run.acceptedEmbeddingTimeMs,
+                           run.rejectedEmbeddingTimeMs, run.totalRequests, run.accepted);
+      for (const auto& row : result.records) requests << row.algorithm << ',' << row.substrateSeed << ',' << row.requestSeed << ',' << row.requestId << ',' << row.arrival << ',' << row.departure << ',' << row.virtualNodes << ',' << row.virtualEdges << ',' << (row.accepted ? 1 : 0) << ',' << rejectReasonName(row.reason) << ',' << row.revenue << ',' << row.cost << ',' << row.cpuUtilization << ',' << row.linkUtilization << ',' << (row.boundaryLossComponentsValid ? 1 : 0) << ',' << row.nodeBoundaryLossCost << ',' << row.linkBoundaryLossCost << ',' << row.boundaryLossObjective << ',' << row.embeddingTimeMs << '\n';
     }
     bool hasVineyardDiagnostics = false;
     for (const auto& result : results) if (result.summary.algorithm == name)

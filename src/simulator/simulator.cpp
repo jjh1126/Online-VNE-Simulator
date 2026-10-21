@@ -50,8 +50,13 @@ SimulationResult Simulator::run() {
   VineyardAlgorithm vineyard(
       config_.randomizedVineyard ? VineyardMode::Randomized : VineyardMode::Deterministic,
       config_.algorithm, config_.substrateSeed, config_.requestSeed);
-  if (!config_.useBcp && !config_.useVineyard)
+  double initializationMs = 0.0;
+  if (!config_.useBcp && !config_.useVineyard) {
+    const auto initializationStarted = std::chrono::steady_clock::now();
     algorithm.initialize(substrate_);
+    initializationMs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - initializationStarted).count();
+  }
   int horizon = 1;
   for (const auto& request : requests_) horizon = std::max(horizon, request.departure + 1);
   if (config_.horizon > 0) horizon = config_.horizon;
@@ -63,6 +68,7 @@ SimulationResult Simulator::run() {
   std::vector<std::optional<Active>> active(requests_.size());
   std::priority_queue<std::pair<int, int>, std::vector<std::pair<int, int>>, std::greater<>> departures;
   SimulationResult result;
+  result.summary.initializationMs = initializationMs;
   if (config_.useBcp) {
     result.summary.algorithm = "VNE-BCP";
   } else if (config_.useVineyard) {
@@ -85,16 +91,24 @@ SimulationResult Simulator::run() {
     for (int requestIndex : arrivals[time]) {
       const auto& request = requests_[requestIndex];
       RejectReason reason = RejectReason::Route;
+      const bool measured = request.arrival >= config_.warmup;
+      const auto embeddingStarted = measured
+          ? std::chrono::steady_clock::now()
+          : std::chrono::steady_clock::time_point{};
       auto embedding = config_.useBcp
           ? embedBcp(substrate_, request, firstRequest,
                      config_.algorithm, &reason)
           : config_.useVineyard
               ? vineyard.embed(substrate_, request, firstRequest, &reason)
               : algorithm.embed(substrate_, request, firstRequest, &reason);
+      const double embeddingTimeMs = measured
+          ? std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - embeddingStarted).count()
+          : 0.0;
       // Algorithm 3 applies to the first VNR attempt, not the first accepted VNR.
       firstRequest = false;
-      const bool measured = request.arrival >= config_.warmup;
       RequestRecord record;
+      record.embeddingTimeMs = embeddingTimeMs;
       record.algorithm = result.summary.algorithm;
       record.substrateSeed = config_.substrateSeed;
       record.requestSeed = config_.requestSeed;
@@ -119,6 +133,11 @@ SimulationResult Simulator::run() {
       if (measured) {
         result.records.push_back(record);
         ++result.summary.totalRequests;
+        result.summary.totalEmbeddingTimeMs += embeddingTimeMs;
+        if (embedding)
+          result.summary.acceptedEmbeddingTimeMs += embeddingTimeMs;
+        else
+          result.summary.rejectedEmbeddingTimeMs += embeddingTimeMs;
       } else {
         ++result.summary.warmupRequests;
       }

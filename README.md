@@ -31,3 +31,7 @@ Algorithms: `VNE-BCP`, `VNE-RFD-B`, `VNE-RFD-D`, `D-ViNE-LB`, and `R-ViNE-LB`.
 Main options: `--threads`, `--horizon`, `--tau`, `--ksp`, `--delta`, `--max-d`, `--alpha`, `--beta`, `--lambda`, `--gamma`, `--vine-timeout`, `--vine-seed`, and `--vine-diagnostics`.
 
 Each run writes `summary.csv`, `runs.csv`, and `requests.csv` to a timestamped result directory.
+
+`requests.csv` includes `embedding_time_ms` alongside `accepted` (1/0) and `reason` for measurement-window requests, excluding warmup. `runs.csv` and `summary.csv` report total, accepted, and rejected embedding time sums and averages; averages use the corresponding request counts and are 0 for empty groups.
+
+RFD precomputation is recorded separately as `initialization_ms` in `runs.csv` and `total_initialization_ms` in `summary.csv` (0 for BCP and ViNE). Embedding times exclude this initialization; existing runtime columns still include initialization and warmup.
